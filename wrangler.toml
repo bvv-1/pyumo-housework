@@ -1,0 +1,9 @@
+name = "pyumo-housework"
+compatibility_date = "2024-04-03"
+main = "src/index.ts"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "housework-db"
+database_id = "7c86e74f-2a92-4936-a4aa-35a26646bec9"
+migrations_dir = "drizzle"

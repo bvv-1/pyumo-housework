@@ -1,0 +1,33 @@
+{
+  "name": "pyumo-housework",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "fmt": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check --formatter-enabled=false .",
+    "check:write": "biome check --write .",
+    "ts": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply housework-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply housework-db --remote"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.4",
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.14"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.5",
+    "@cloudflare/workers-types": "^4.20260421.1",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.84.1"
+  }
+}

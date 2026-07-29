@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1776813694983,
+      "tag": "0000_init_db",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776818442127,
+      "tag": "0001_goofy_firedrake",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785158519224,
+      "tag": "0002_colorful_korath",
+      "breakpoints": true
+    }
+  ]
+}

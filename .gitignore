@@ -1,0 +1,8 @@
+node_modules/
+.pnpm-store/
+.wrangler/
+.playwright-mcp/
+
+dist/
+.env
+.env.*
