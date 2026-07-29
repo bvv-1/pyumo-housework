@@ -21,9 +21,6 @@ const parseId = (value: string) => {
 
 const parseTodoistTaskId = (value: string) => (/^[A-Za-z0-9_-]+$/.test(value) ? value : null);
 
-const todoistError = (c: Parameters<typeof app.get>[1] extends (context: infer Context) => unknown ? Context : never) =>
-  c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
-
 const todoistRequest = async (token: string, path: string, init: RequestInit = {}) => {
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
@@ -33,24 +30,33 @@ const todoistRequest = async (token: string, path: string, init: RequestInit = {
   return fetch(`${todoistApiUrl}${path}`, { ...init, headers });
 };
 
-const listTodoistTasks = async (token: string) => {
-  const allTasks: unknown[] = [];
+const listTodoistResults = async (token: string, path: string, query: Record<string, string>) => {
+  const results: unknown[] = [];
   let cursor: string | null = null;
 
   do {
-    const params = new URLSearchParams({ project_id: todoistProjectId, limit: '200' });
+    const params = new URLSearchParams({ ...query, limit: '200' });
     if (cursor) params.set('cursor', cursor);
 
-    const response = await todoistRequest(token, `/tasks?${params}`);
+    const response = await todoistRequest(token, `${path}?${params}`);
     if (!response.ok) throw response;
 
     const page = await response.json<{ results?: unknown[]; next_cursor?: string | null }>();
-    allTasks.push(...(page.results ?? []));
+    results.push(...(page.results ?? []));
     cursor = page.next_cursor ?? null;
   } while (cursor);
 
-  return allTasks;
+  return results;
 };
+
+const listTodoistTasks = (token: string) => listTodoistResults(token, '/tasks', { project_id: todoistProjectId });
+
+const listTodoistSections = (token: string) => listTodoistResults(token, '/sections', { project_id: todoistProjectId });
+
+const listTodoistComments = (token: string, taskId: string) => listTodoistResults(token, '/comments', { task_id: taskId });
+
+const listTodoistCollaborators = (token: string) =>
+  listTodoistResults(token, `/projects/${encodeURIComponent(todoistProjectId)}/collaborators`, {});
 
 const todoistApiFailure = async (
   c: { json: (object: { error: string }, status: 400 | 401 | 403 | 404 | 429 | 502) => Response },
@@ -215,11 +221,158 @@ app.delete('/api/todos/:id', async (c) => {
   return c.json(allTodos);
 });
 
+// GET /api/todoist/tasks - List active tasks in the shared Todoist project
+app.get('/api/todoist/tasks', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  try {
+    return c.json(await listTodoistTasks(token));
+  } catch (error) {
+    if (error instanceof Response) return todoistApiFailure(c, error);
+    return c.json({ error: 'Todoist APIに接続できませんでした。' }, 502);
+  }
+});
+
+// GET /api/todoist/sections - List sections in the shared Todoist project
+app.get('/api/todoist/sections', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  try {
+    return c.json(await listTodoistSections(token));
+  } catch (error) {
+    if (error instanceof Response) return todoistApiFailure(c, error);
+    return c.json({ error: 'Todoist APIに接続できませんでした。' }, 502);
+  }
+});
+
+// GET /api/todoist/collaborators - List members of the shared Todoist project
+app.get('/api/todoist/collaborators', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  try {
+    return c.json(await listTodoistCollaborators(token));
+  } catch (error) {
+    if (error instanceof Response) return todoistApiFailure(c, error);
+    return c.json({ error: 'Todoist APIに接続できませんでした。' }, 502);
+  }
+});
+
+// POST /api/todoist/tasks - Add a task to the shared Todoist project
+app.post('/api/todoist/tasks', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  const body = await c.req.json<{ content?: unknown; sectionId?: unknown }>().catch(() => null);
+  const content = typeof body?.content === 'string' ? body.content.trim() : '';
+  if (!content) return c.json({ error: 'タスク名を入力してください。' }, 400);
+  const sectionId = typeof body?.sectionId === 'string' && body.sectionId ? parseTodoistTaskId(body.sectionId) : null;
+  if (typeof body?.sectionId === 'string' && body.sectionId && !sectionId) {
+    return c.json({ error: 'Invalid Todoist section id' }, 400);
+  }
+
+  const response = await todoistRequest(token, '/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ content, project_id: todoistProjectId, ...(sectionId ? { section_id: sectionId } : {}) }),
+  });
+  if (!response.ok) return todoistApiFailure(c, response);
+
+  return c.json(await listTodoistTasks(token), 201);
+});
+
+// PATCH /api/todoist/tasks/:id - Rename a task
+app.patch('/api/todoist/tasks/:id', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  const id = parseTodoistTaskId(c.req.param('id'));
+  if (!id) return c.json({ error: 'Invalid Todoist task id' }, 400);
+
+  const body = await c.req.json<{ content?: unknown }>().catch(() => null);
+  const content = typeof body?.content === 'string' ? body.content.trim() : '';
+  if (!content) return c.json({ error: 'タスク名を入力してください。' }, 400);
+
+  const response = await todoistRequest(token, `/tasks/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) return todoistApiFailure(c, response);
+
+  return c.json(await listTodoistTasks(token));
+});
+
+// GET /api/todoist/tasks/:id/comments - List comments attached to a task
+app.get('/api/todoist/tasks/:id/comments', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  const id = parseTodoistTaskId(c.req.param('id'));
+  if (!id) return c.json({ error: 'Invalid Todoist task id' }, 400);
+
+  try {
+    return c.json(await listTodoistComments(token, id));
+  } catch (error) {
+    if (error instanceof Response) return todoistApiFailure(c, error);
+    return c.json({ error: 'Todoist APIに接続できませんでした。' }, 502);
+  }
+});
+
+// POST /api/todoist/tasks/:id/comments - Add a comment to a task
+app.post('/api/todoist/tasks/:id/comments', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  const id = parseTodoistTaskId(c.req.param('id'));
+  if (!id) return c.json({ error: 'Invalid Todoist task id' }, 400);
+
+  const body = await c.req.json<{ content?: unknown }>().catch(() => null);
+  const content = typeof body?.content === 'string' ? body.content.trim() : '';
+  if (!content) return c.json({ error: 'コメントを入力してください。' }, 400);
+
+  const response = await todoistRequest(token, '/comments', {
+    method: 'POST',
+    body: JSON.stringify({ task_id: id, content }),
+  });
+  if (!response.ok) return todoistApiFailure(c, response);
+
+  return c.json(await listTodoistComments(token, id), 201);
+});
+
+// POST /api/todoist/tasks/:id/close - Complete a task
+app.post('/api/todoist/tasks/:id/close', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  const id = parseTodoistTaskId(c.req.param('id'));
+  if (!id) return c.json({ error: 'Invalid Todoist task id' }, 400);
+
+  const response = await todoistRequest(token, `/tasks/${encodeURIComponent(id)}/close`, { method: 'POST' });
+  if (!response.ok) return todoistApiFailure(c, response);
+
+  return c.json(await listTodoistTasks(token));
+});
+
+// DELETE /api/todoist/tasks/:id - Delete a task
+app.delete('/api/todoist/tasks/:id', async (c) => {
+  const token = c.env.TODOIST_API_TOKEN;
+  if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
+
+  const id = parseTodoistTaskId(c.req.param('id'));
+  if (!id) return c.json({ error: 'Invalid Todoist task id' }, 400);
+
+  const response = await todoistRequest(token, `/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!response.ok) return todoistApiFailure(c, response);
+
+  return c.json(await listTodoistTasks(token));
+});
+
 // Pages
 app.get('/', (c) => c.html(houseworkTemplate()));
 app.get('/index.html', (c) => c.html(houseworkTemplate()));
 app.get('/todo.html', (c) => c.html(todoTemplate()));
-app.get('/todoist', (c) => c.redirect(todoistSharedProjectUrl));
-app.get('/todoist.html', (c) => c.redirect(todoistSharedProjectUrl));
+app.get('/todoist', (c) => c.html(todoistTemplate()));
+app.get('/todoist.html', (c) => c.html(todoistTemplate()));
 
 export default app;

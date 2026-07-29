@@ -1,0 +1,3 @@
+# ローカル開発時に .dev.vars へコピーして、Todoistの個人用APIトークンを設定してください。
+# 本物のトークンはGitにコミットしないでください。
+TODOIST_API_TOKEN=replace-with-your-todoist-api-token
