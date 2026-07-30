@@ -7,6 +7,12 @@ const pageShell = (pageId: PageId, title: string, content: string, script: strin
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#4a90e2">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <base target="_top">
   <title>${title}</title>
   <style>
@@ -410,6 +416,14 @@ const pageShell = (pageId: PageId, title: string, content: string, script: strin
     .todoist-task-meta {
       display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; color: #817b72; font-size: 0.78rem;
     }
+    .todoist-assignee-field {
+      display: flex; align-items: center; gap: 6px; margin-top: 7px; color: #817b72; font-size: 0.78rem;
+    }
+    .todoist-assignee-field select {
+      min-width: 0; max-width: 180px; padding: 3px 24px 3px 7px; border: 1px solid rgba(54, 46, 36, 0.14);
+      border-radius: 8px; background: #fffefd; color: var(--todoist-ink); font: inherit; cursor: pointer;
+    }
+    .todoist-assignee-field select:disabled { cursor: wait; opacity: 0.6; }
     .todoist-due, .todoist-deadline { display: inline-flex; align-items: center; gap: 3px; }
     .todoist-due::before, .todoist-deadline::before {
       width: 13px; height: 13px; content: ''; opacity: 0.7; background: center / contain no-repeat;
@@ -578,6 +592,11 @@ const pageShell = (pageId: PageId, title: string, content: string, script: strin
   </script>
   <script>${raw(script)}</script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+    }
+  </script>
 </body>
 </html>`;
 
@@ -831,11 +850,24 @@ export const todoistTemplate = () => pageShell(
           <input class="todo-check" type="checkbox" @change="completeTask(task.id)" aria-label="完了にする">
           <div>
             <div class="task-name todo-name" x-text="task.content"></div>
-            <div class="todoist-task-meta" x-show="task.due || task.deadline || task.responsible_uid || task.assignee_id">
+            <div class="todoist-task-meta" x-show="task.due || task.deadline">
               <span class="todoist-due" x-show="task.due" x-text="dueLabel(task)"></span>
               <span class="todoist-deadline" x-show="task.deadline" x-text="deadlineLabel(task)"></span>
-              <span x-show="task.responsible_uid || task.assignee_id" x-text="assigneeName(task)"></span>
             </div>
+            <label class="todoist-assignee-field">
+              <span>担当者</span>
+              <select
+                :value="task.responsible_uid || task.assignee_id || ''"
+                :disabled="updatingAssigneeTaskId === task.id"
+                :aria-label="task.content + ' の担当者'"
+                @change="updateAssignee(task, $event.target.value)"
+              >
+                <option value="">担当なし</option>
+                <template x-for="collaborator in collaborators" :key="collaborator.id">
+                  <option :value="collaborator.id" x-text="collaboratorName(collaborator)"></option>
+                </template>
+              </select>
+            </label>
           </div>
           <div class="todoist-actions">
             <button class="todoist-action" type="button" title="コメント" aria-label="コメント" @click="toggleComments(task.id)">
@@ -891,6 +923,7 @@ export const todoistTemplate = () => pageShell(
         commentsLoading: false,
         newCommentContent: '',
         addingTask: false,
+        updatingAssigneeTaskId: null,
         loading: true,
 
         async loadTasks() {
@@ -990,12 +1023,8 @@ export const todoistTemplate = () => pageShell(
           return task.deadline?.date ? '締切・' + this.formatTaskDate(task.deadline.date) : '';
         },
 
-        assigneeName(task) {
-          const assigneeId = task.responsible_uid || task.assignee_id;
-          if (!assigneeId) return '担当なし';
-          const collaborator = this.collaborators.find(user => String(user.id) === String(assigneeId));
-          const name = collaborator?.name || collaborator?.full_name || collaborator?.email || String(assigneeId);
-          return '担当: ' + name;
+        collaboratorName(collaborator) {
+          return collaborator.name || collaborator.full_name || collaborator.email || String(collaborator.id);
         },
 
         commentAuthorName(comment) {
@@ -1025,6 +1054,24 @@ export const todoistTemplate = () => pageShell(
             });
           } catch (error) {
             this.handleError(error);
+          }
+        },
+
+        async updateAssignee(task, assigneeId) {
+          const currentAssigneeId = task.responsible_uid || task.assignee_id || '';
+          if (String(assigneeId) === String(currentAssigneeId) || this.updatingAssigneeTaskId) return;
+
+          this.updatingAssigneeTaskId = task.id;
+          try {
+            this.tasks = await this.fetchJson('/api/todoist/tasks/' + task.id, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ assigneeId: assigneeId ? Number(assigneeId) : null })
+            });
+          } catch (error) {
+            this.handleError(error);
+          } finally {
+            this.updatingAssigneeTaskId = null;
           }
         },
 

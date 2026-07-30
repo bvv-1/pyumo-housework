@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { tasks, todos } from './db/schema';
 import { asc, desc, eq } from 'drizzle-orm';
 import { houseworkTemplate, todoistTemplate, todoTemplate } from './template';
+import { appIcon, manifest, offlinePage, serviceWorker } from './pwa';
 
 const todoistProjectId = '6gH27QV4hJ97jH7H';
 const todoistApiUrl = 'https://api.todoist.com/api/v1';
@@ -282,7 +283,7 @@ app.post('/api/todoist/tasks', async (c) => {
   return c.json(await listTodoistTasks(token), 201);
 });
 
-// PATCH /api/todoist/tasks/:id - Rename a task
+// PATCH /api/todoist/tasks/:id - Update a task's content or assignee
 app.patch('/api/todoist/tasks/:id', async (c) => {
   const token = c.env.TODOIST_API_TOKEN;
   if (!token) return c.json({ error: 'Todoist APIトークンが設定されていません。' }, 503);
@@ -290,13 +291,29 @@ app.patch('/api/todoist/tasks/:id', async (c) => {
   const id = parseTodoistTaskId(c.req.param('id'));
   if (!id) return c.json({ error: 'Invalid Todoist task id' }, 400);
 
-  const body = await c.req.json<{ content?: unknown }>().catch(() => null);
-  const content = typeof body?.content === 'string' ? body.content.trim() : '';
-  if (!content) return c.json({ error: 'タスク名を入力してください。' }, 400);
+  const body = await c.req.json<{ content?: unknown; assigneeId?: unknown }>().catch(() => null);
+  if (!body || typeof body !== 'object') return c.json({ error: '更新内容を指定してください。' }, 400);
+
+  const updates: { content?: string; assignee_id?: number | null } = {};
+  if (Object.hasOwn(body, 'content')) {
+    const content = typeof body.content === 'string' ? body.content.trim() : '';
+    if (!content) return c.json({ error: 'タスク名を入力してください。' }, 400);
+    updates.content = content;
+  }
+  if (Object.hasOwn(body, 'assigneeId')) {
+    if (body.assigneeId === null) {
+      updates.assignee_id = null;
+    } else if (typeof body.assigneeId === 'number' && Number.isSafeInteger(body.assigneeId) && body.assigneeId > 0) {
+      updates.assignee_id = body.assigneeId;
+    } else {
+      return c.json({ error: '担当者が不正です。' }, 400);
+    }
+  }
+  if (Object.keys(updates).length === 0) return c.json({ error: '更新内容を指定してください。' }, 400);
 
   const response = await todoistRequest(token, `/tasks/${encodeURIComponent(id)}`, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(updates),
   });
   if (!response.ok) return todoistApiFailure(c, response);
 
@@ -369,6 +386,12 @@ app.delete('/api/todoist/tasks/:id', async (c) => {
 });
 
 // Pages
+app.get('/manifest.webmanifest', () =>
+  new Response(JSON.stringify(manifest), { headers: { 'Content-Type': 'application/manifest+json; charset=UTF-8' } }),
+);
+app.get('/sw.js', () => new Response(serviceWorker, { headers: { 'Content-Type': 'application/javascript; charset=UTF-8' } }));
+app.get('/icon.svg', () => new Response(appIcon, { headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=604800' } }));
+app.get('/offline.html', () => new Response(offlinePage, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } }));
 app.get('/', (c) => c.html(houseworkTemplate()));
 app.get('/index.html', (c) => c.html(houseworkTemplate()));
 app.get('/todo.html', (c) => c.html(todoTemplate()));
